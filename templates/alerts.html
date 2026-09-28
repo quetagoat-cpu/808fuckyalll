@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Мои алерты</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #17212b);
+    --text: var(--tg-theme-text-color, #ffffff);
+    --hint: var(--tg-theme-hint-color, #7f8c9a);
+    --btn: var(--tg-theme-button-color, #2ea6ff);
+    --btn-text: var(--tg-theme-button-text-color, #ffffff);
+    --card: var(--tg-theme-secondary-bg-color, #232e3c);
+    --danger: #ff5c5c;
+    --green: #4cd964;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, sans-serif;
+    font-size: 15px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--hint); font-size: 13px; margin-bottom: 16px; }
+
+  .card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .card .left { min-width: 0; }
+  .symbol { font-weight: 600; font-size: 16px; }
+  .meta { color: var(--hint); font-size: 13px; margin-top: 3px; }
+  .dir-above { color: var(--green); }
+  .dir-below { color: var(--danger); }
+
+  .del {
+    background: transparent;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .del:active { opacity: .6; }
+
+  .empty {
+    text-align: center;
+    color: var(--hint);
+    padding: 32px 12px;
+    font-size: 14px;
+  }
+
+  form {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 16px;
+    margin-top: 18px;
+  }
+  form h2 { font-size: 15px; margin: 0 0 12px; }
+  label { display: block; font-size: 12px; color: var(--hint); margin-bottom: 4px; }
+  input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-size: 16px;
+    margin-bottom: 12px;
+    outline: none;
+  }
+  input:focus { border-color: var(--btn); }
+
+  button.primary {
+    width: 100%;
+    background: var(--btn);
+    color: var(--btn-text);
+    border: none;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:active { opacity: .85; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%) translateY(80px);
+    background: rgba(0,0,0,.85);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    transition: transform .25s ease;
+    pointer-events: none;
+    max-width: 90vw;
+    text-align: center;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+  <h1>Мои алерты</h1>
+  <div class="sub" id="sub">Загрузка…</div>
+
+  <div id="list"></div>
+
+  <form id="add-form">
+    <h2>Новый алерт</h2>
+    <label for="symbol">Тикер</label>
+    <input id="symbol" name="symbol" placeholder="BTCUSDT" autocapitalize="characters" autocomplete="off" required>
+
+    <label for="target">Целевая цена (USDT)</label>
+    <input id="target" name="target" type="number" step="any" inputmode="decimal" placeholder="70000" required>
+
+    <button class="primary" type="submit" id="submit-btn">Добавить</button>
+  </form>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const initData = tg?.initData || "";
+  const headers = { "X-Telegram-Init-Data": initData };
+  const listEl = document.getElementById("list");
+  const subEl  = document.getElementById("sub");
+  const form   = document.getElementById("add-form");
+  const submitBtn = document.getElementById("submit-btn");
+  const toastEl = document.getElementById("toast");
+
+  let toastTimer;
+  function toast(msg, ms = 2200) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), ms);
+  }
+
+  function arrow(direction) {
+    return direction === "above" ? "▲ выше" : "▼ ниже";
+  }
+  function dirClass(direction) {
+    return direction === "above" ? "dir-above" : "dir-below";
+  }
+
+  function render(alerts) {
+    if (!alerts.length) {
+      subEl.textContent = "Пока пусто";
+      listEl.innerHTML = `<div class="empty">У тебя нет активных алертов.<br>Добавь первый ниже 👇</div>`;
+      return;
+    }
+    subEl.textContent = `Активных: ${alerts.length}`;
+    listEl.innerHTML = alerts.map(a => `
+      <div class="card" data-id="${a.id}">
+        <div class="left">
+          <div class="symbol">${a.symbol}</div>
+          <div class="meta">
+            ${a.target_price} USDT ·
+            <span class="${dirClass(a.direction)}">${arrow(a.direction)}</span>
+          </div>
+        </div>
+        <button class="del" data-id="${a.id}">Удалить</button>
+      </div>
+    `).join("");
+
+    listEl.querySelectorAll(".del").forEach(btn => {
+      btn.addEventListener("click", () => removeAlert(btn.dataset.id));
+    });
+  }
+
+  async function loadAlerts() {
+    try {
+      const r = await fetch("/api/alerts", { headers });
+      if (!r.ok) throw new Error((await r.json()).error || "Ошибка загрузки");
+      const alerts = await r.json();
+      render(alerts);
+    } catch (e) {
+      subEl.textContent = "";
+      listEl.innerHTML = `<div class="empty">⚠️ ${e.message}</div>`;
+    }
+  }
+
+  async function removeAlert(id) {
+    const card = listEl.querySelector(`.card[data-id="${id}"]`);
+    if (card) card.style.opacity = ".4";
+    try {
+      const r = await fetch(`/api/alerts/${id}`, { method: "DELETE", headers });
+      if (!r.ok) throw new Error((await r.json()).error || "Не удалось удалить");
+      toast("Удалено");
+      loadAlerts();
+    } catch (e) {
+      if (card) card.style.opacity = "1";
+      toast(e.message);
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const symbol = document.getElementById("symbol").value.trim().toUpperCase();
+    const target = document.getElementById("target").value.trim();
+    if (!symbol || !target) return;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Проверяю…";
+    try {
+      const r = await fetch("/api/alerts", {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, target_price: target }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Ошибка");
+      toast(`Алерт добавлен · сейчас ${data.current_price}`);
+      form.reset();
+      loadAlerts();
+    } catch (e) {
+      toast(e.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Добавить";
+    }
+  });
+
+  loadAlerts();
+</script>
+</body>
+</html>
